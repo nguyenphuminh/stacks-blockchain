@@ -33,6 +33,7 @@ use crate::vm::types::{
     BufferLength, FixedFunction, FunctionType, PrincipalData, QualifiedContractIdentifier,
     TypeSignature, Value, BUFF_1, BUFF_20, BUFF_21, BUFF_32, BUFF_64,
 };
+use stacks_common::types::StacksEpochId;
 
 use crate::vm::database::MemoryBackingStore;
 use crate::vm::types::TypeSignature::{BoolType, IntType, PrincipalType, SequenceType, UIntType};
@@ -54,13 +55,22 @@ pub mod contracts;
 
 #[template]
 #[rstest]
-#[case(ClarityVersion::Clarity1)]
-#[case(ClarityVersion::Clarity2)]
-fn test_clarity_versions_type_checker(#[case] version: ClarityVersion) {}
+#[case(ClarityVersion::Clarity1, StacksEpochId::Epoch2_05)]
+#[case(ClarityVersion::Clarity1, StacksEpochId::Epoch21)]
+#[case(ClarityVersion::Clarity2, StacksEpochId::Epoch21)]
+fn test_clarity_versions_type_checker(
+    #[case] version: ClarityVersion,
+    #[case] epoch: StacksEpochId,
+) {
+}
 
-/// Backwards-compatibility shim for type_checker tests. Runs at Clarity2 version.
+/// Backwards-compatibility shim for type_checker tests. Runs at latest Clarity version.
 pub fn mem_type_check(exp: &str) -> CheckResult<(Option<TypeSignature>, ContractAnalysis)> {
-    mem_run_analysis(exp, crate::vm::ClarityVersion::Clarity2)
+    mem_run_analysis(
+        exp,
+        crate::vm::ClarityVersion::latest(),
+        StacksEpochId::latest(),
+    )
 }
 
 fn type_check_helper(exp: &str) -> TypeResult {
@@ -294,7 +304,7 @@ fn test_get_burn_block_info() {
 }
 
 #[apply(test_clarity_versions_type_checker)]
-fn test_define_trait(#[case] version: ClarityVersion) {
+fn test_define_trait(#[case] version: ClarityVersion, #[case] epoch: StacksEpochId) {
     let good = [
         "(define-trait trait-1 ((get-1 (uint) (response uint uint))))",
         "(define-trait trait-1 ((get-1 () (response uint (buff 32)))))",
@@ -332,13 +342,13 @@ fn test_define_trait(#[case] version: ClarityVersion) {
 
     let contract_identifier = QualifiedContractIdentifier::transient();
     for (bad_test, expected) in bad.iter().zip(bad_expected.iter()) {
-        let res = build_ast(&contract_identifier, bad_test, &mut (), version).unwrap_err();
+        let res = build_ast(&contract_identifier, bad_test, &mut (), version, epoch).unwrap_err();
         assert_eq!(expected, &res.err);
     }
 }
 
 #[apply(test_clarity_versions_type_checker)]
-fn test_use_trait(#[case] version: ClarityVersion) {
+fn test_use_trait(#[case] version: ClarityVersion, #[case] epoch: StacksEpochId) {
     let bad = [
         "(use-trait trait-1 ((get-1 (uint) (response uint uint))))",
         "(use-trait trait-1 ((get-1 uint)))",
@@ -354,13 +364,13 @@ fn test_use_trait(#[case] version: ClarityVersion) {
 
     let contract_identifier = QualifiedContractIdentifier::transient();
     for (bad_test, expected) in bad.iter().zip(bad_expected.iter()) {
-        let res = build_ast(&contract_identifier, bad_test, &mut (), version).unwrap_err();
+        let res = build_ast(&contract_identifier, bad_test, &mut (), version, epoch).unwrap_err();
         assert_eq!(expected, &res.err);
     }
 }
 
 #[apply(test_clarity_versions_type_checker)]
-fn test_impl_trait(#[case] version: ClarityVersion) {
+fn test_impl_trait(#[case] version: ClarityVersion, #[case] epoch: StacksEpochId) {
     let bad = ["(impl-trait trait-1)", "(impl-trait)"];
     let bad_expected = [
         ParseErrors::ImplTraitBadSignature,
@@ -369,7 +379,7 @@ fn test_impl_trait(#[case] version: ClarityVersion) {
 
     let contract_identifier = QualifiedContractIdentifier::transient();
     for (bad_test, expected) in bad.iter().zip(bad_expected.iter()) {
-        let res = build_ast(&contract_identifier, bad_test, &mut (), version).unwrap_err();
+        let res = build_ast(&contract_identifier, bad_test, &mut (), version, epoch).unwrap_err();
         assert_eq!(expected, &res.err);
     }
 }
@@ -484,7 +494,7 @@ fn test_tx_sponsor() {
 }
 
 #[apply(test_clarity_versions_type_checker)]
-fn test_destructuring_opts(#[case] version: ClarityVersion) {
+fn test_destructuring_opts(#[case] version: ClarityVersion, #[case] epoch: StacksEpochId) {
     let good = [
         "(unwrap! (some 1) 2)",
         "(unwrap-err! (err 1) 2)",
@@ -537,6 +547,7 @@ fn test_destructuring_opts(#[case] version: ClarityVersion) {
             CheckErrors::ExpectedResponseType(TypeSignature::from_string(
                 "(optional int)",
                 version,
+                epoch,
             )),
         ),
         (
@@ -605,7 +616,7 @@ fn test_destructuring_opts(#[case] version: ClarityVersion) {
         ("(match)", CheckErrors::RequiresAtLeastArguments(1, 0)),
         (
             "(match 1 ok-val (/ ok-val 0) err-val (+ err-val 7))",
-            CheckErrors::BadMatchInput(TypeSignature::from_string("int", version)),
+            CheckErrors::BadMatchInput(TypeSignature::from_string("int", version, epoch)),
         ),
         (
             "(default-to 3 5)",
@@ -697,7 +708,7 @@ fn test_at_block() {
 }
 
 #[apply(test_clarity_versions_type_checker)]
-fn test_trait_reference_unknown(#[case] version: ClarityVersion) {
+fn test_trait_reference_unknown(#[case] version: ClarityVersion, #[case] epoch: StacksEpochId) {
     let bad = [(
         "(+ 1 <kvstore>)",
         ParseErrors::TraitReferenceUnknown("kvstore".to_string()),
@@ -705,7 +716,7 @@ fn test_trait_reference_unknown(#[case] version: ClarityVersion) {
 
     let contract_identifier = QualifiedContractIdentifier::transient();
     for (bad_test, expected) in bad.iter() {
-        let res = build_ast(&contract_identifier, bad_test, &mut (), version).unwrap_err();
+        let res = build_ast(&contract_identifier, bad_test, &mut (), version, epoch).unwrap_err();
         assert_eq!(expected, &res.err);
     }
 }
@@ -981,7 +992,7 @@ fn test_element_at() {
 }
 
 #[apply(test_clarity_versions_type_checker)]
-fn test_eqs(#[case] version: ClarityVersion) {
+fn test_eqs(#[case] version: ClarityVersion, #[case] epoch: StacksEpochId) {
     let good = [
         "(is-eq (list 1 2 3 4 5) (list 1 2 3 4 5 6 7))",
         "(is-eq (tuple (good 1) (bad 2)) (tuple (good 2) (bad 3)))",
@@ -1000,8 +1011,8 @@ fn test_eqs(#[case] version: ClarityVersion) {
         CheckErrors::TypeError(BoolType, IntType),
         CheckErrors::TypeError(TypeSignature::list_of(IntType, 1).unwrap(), IntType),
         CheckErrors::TypeError(
-            TypeSignature::from_string("(optional bool)", version),
-            TypeSignature::from_string("(optional int)", version),
+            TypeSignature::from_string("(optional bool)", version, epoch),
+            TypeSignature::from_string("(optional int)", version, epoch),
         ),
     ];
 
@@ -1785,7 +1796,7 @@ fn test_string_to_ints() {
 }
 
 #[apply(test_clarity_versions_type_checker)]
-fn test_response_inference(#[case] version: ClarityVersion) {
+fn test_response_inference(#[case] version: ClarityVersion, #[case] epoch: StacksEpochId) {
     let good = [
         "(define-private (foo (x int)) (err x))
                  (define-private (bar (x bool)) (ok x))
@@ -1821,7 +1832,7 @@ fn test_response_inference(#[case] version: ClarityVersion) {
 
     let bad_expected = [
         CheckErrors::TypeError(
-            TypeSignature::from_string("(response bool int)", version),
+            TypeSignature::from_string("(response bool int)", version, epoch),
             BoolType,
         ),
         CheckErrors::ReturnTypesMustMatch(IntType, BoolType),
@@ -1915,7 +1926,7 @@ fn test_factorial() {
 }
 
 #[apply(test_clarity_versions_type_checker)]
-fn test_options(#[case] version: ClarityVersion) {
+fn test_options(#[case] version: ClarityVersion, #[case] epoch: StacksEpochId) {
     let contract = "
          (define-private (foo (id (optional int)))
            (+ 1 (default-to 1 id)))
@@ -1944,8 +1955,8 @@ fn test_options(#[case] version: ClarityVersion) {
 
     assert!(match mem_type_check(contract).unwrap_err().err {
         CheckErrors::TypeError(t1, t2) => {
-            t1 == TypeSignature::from_string("(optional bool)", version)
-                && t2 == TypeSignature::from_string("(optional int)", version)
+            t1 == TypeSignature::from_string("(optional bool)", version, epoch)
+                && t2 == TypeSignature::from_string("(optional int)", version, epoch)
         }
         _ => false,
     });
